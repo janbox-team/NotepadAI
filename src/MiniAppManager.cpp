@@ -23,16 +23,10 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
-#include <QEventLoop>
 #include <QFont>
 #include <QHostAddress>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QMenu>
 #include <QMessageBox>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -65,30 +59,6 @@ static QIcon tintIcon(const QString &svgPath, const QColor &color)
         dst.addPixmap(pm);
     }
     return dst;
-}
-
-static QString fetchCdpPageId(const QString &cdpHttpUrl)
-{
-    QUrl listUrl(cdpHttpUrl + QStringLiteral("/json/list"));
-    QNetworkAccessManager nam;
-    QNetworkRequest req(listUrl);
-    req.setTransferTimeout(500);
-    QNetworkReply *reply = nam.get(req);
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-    if (reply->error() != QNetworkReply::NoError) {
-        reply->deleteLater();
-        return {};
-    }
-    const QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
-    reply->deleteLater();
-    for (const auto &v : arr) {
-        const QJsonObject obj = v.toObject();
-        if (obj.value(QStringLiteral("type")).toString() == QStringLiteral("page"))
-            return obj.value(QStringLiteral("id")).toString();
-    }
-    return {};
 }
 
 static bool dockTabPinned(const ads::CDockWidget *dw)
@@ -420,23 +390,8 @@ void MiniAppManager::launchApp(const MiniAppDefinition &def)
                 menu.addAction(tr("Send to AI"), this,
                                [instance, aiDock = QPointer<AiAgentDock>(aiDock)]() {
                     if (!instance || !aiDock) return;
-                    const QString cdpUrl = instance->cdpHttpUrl();
-                    QString currentPage;
-                    if (auto *wv = instance->webViewWidget()) {
-                        const QString url = wv->currentUrl();
-                        if (!url.isEmpty())
-                            currentPage = QStringLiteral(" Currently on: %1.").arg(url);
-                    }
-                    const QString pageId = fetchCdpPageId(cdpUrl);
-                    QString pageConstraint;
-                    if (!pageId.isEmpty())
-                        pageConstraint = QStringLiteral(" Use only target/page ID %1 — do not create or switch to other pages.").arg(pageId);
-                    else
-                        pageConstraint = QStringLiteral(" Do not create or switch to other pages.");
-                    const QString msg = QStringLiteral(
-                        "--connect %1 (via CDP).%2%3\n\n")
-                        .arg(cdpUrl, currentPage, pageConstraint);
-                    aiDock->insertTextToInput(msg);
+                    aiDock->insertTextToInput(
+                        QStringLiteral("cdp-url:%1").arg(instance->cdpHttpUrl()));
                     aiDock->setVisible(true);
                     aiDock->raise();
                 });
@@ -754,21 +709,8 @@ void MiniAppManager::launchQuickBrowser(const QUrl &url, bool enableCdp,
             menu.addAction(tr("Send to AI"), this,
                            [webView, aiDock = QPointer<AiAgentDock>(aiDock)]() {
                 if (!webView || !aiDock) return;
-                const QString cdpUrl = webView->cdpHttpUrl();
-                QString currentPage;
-                const QString url = webView->currentUrl();
-                if (!url.isEmpty())
-                    currentPage = QStringLiteral(" Currently on: %1.").arg(url);
-                const QString pageId = fetchCdpPageId(cdpUrl);
-                QString pageConstraint;
-                if (!pageId.isEmpty())
-                    pageConstraint = QStringLiteral(" Use only target/page ID %1 — do not create or switch to other pages.").arg(pageId);
-                else
-                    pageConstraint = QStringLiteral(" Do not create or switch to other pages.");
-                const QString msg = QStringLiteral(
-                    "--connect %1 (via CDP).%2%3\n\n")
-                    .arg(cdpUrl, currentPage, pageConstraint);
-                aiDock->insertTextToInput(msg);
+                aiDock->insertTextToInput(
+                    QStringLiteral("cdp-url:%1").arg(webView->cdpHttpUrl()));
                 aiDock->setVisible(true);
                 aiDock->raise();
             });
