@@ -8,6 +8,8 @@
 #include <QtTest>
 
 #include <QComboBox>
+#include <QCompleter>
+#include <QAbstractItemModel>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QGroupBox>
@@ -37,6 +39,8 @@ private slots:
     void debugOff_persistsPortAndDoesNotApplyIt();
     void proxyOff_persistsFieldsAndDoesNotApplyThem();
     void healthReady_commandWaitsFor2xx();
+    void group_persistsAndCompletesExistingNames();
+    void group_completerIncludesOtherScope();
 
 private:
     static QPushButton *buttonWithText(QWidget &root, const QString &text);
@@ -347,6 +351,84 @@ void TestEditMiniAppsDialog::healthReady_commandWaitsFor2xx()
     QVERIFY(miniAppHealthReady(302));
     QVERIFY(!miniAppHealthReady(403));
     QVERIFY(!miniAppHealthReady(0));
+}
+
+void TestEditMiniAppsDialog::group_persistsAndCompletesExistingNames()
+{
+    ApplicationSettings settings;
+    MiniAppRegistry registry(&settings);
+    {
+        EditMiniAppsDialog dialog(&registry, QString());
+        buttonWithText(dialog, QStringLiteral("+"))->click();
+        editWithPlaceholder(dialog, QStringLiteral("Display name (required)"))
+            ->setText(QStringLiteral("Discord"));
+        editWithPlaceholder(dialog, QStringLiteral("http://localhost:3000"))
+            ->setText(QStringLiteral("https://discord.com"));
+        auto *group = dialog.findChild<QLineEdit *>(QStringLiteral("miniAppGroupEdit"));
+        QVERIFY(group);
+        QVERIFY(group->completer());
+        group->setText(QStringLiteral("Chat"));
+
+        buttonWithText(dialog, QStringLiteral("+"))->click();
+        editWithPlaceholder(dialog, QStringLiteral("Display name (required)"))
+            ->setText(QStringLiteral("Grok"));
+        editWithPlaceholder(dialog, QStringLiteral("http://localhost:3000"))
+            ->setText(QStringLiteral("https://grok.com"));
+
+        group = dialog.findChild<QLineEdit *>(QStringLiteral("miniAppGroupEdit"));
+        QVERIFY(group);
+        auto *completer = group->completer();
+        QVERIFY(completer);
+        QCOMPARE(completer->caseSensitivity(), Qt::CaseInsensitive);
+        QStringList suggestions;
+        const QAbstractItemModel *model = completer->model();
+        QVERIFY(model);
+        for (int i = 0; i < model->rowCount(); ++i)
+            suggestions.append(model->index(i, 0).data().toString());
+        QVERIFY(suggestions.contains(QStringLiteral("Chat")));
+
+        completer->setCompletionPrefix(QStringLiteral("ch"));
+        QCOMPARE(completer->currentCompletion(), QStringLiteral("Chat"));
+
+        dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(dialog.result(), static_cast<int>(QDialog::Accepted));
+    }
+
+    const QList<MiniAppDefinition> saved = registry.globalApps();
+    QCOMPARE(saved.size(), 2);
+    QCOMPARE(saved[0].group, QStringLiteral("Chat"));
+    QVERIFY(saved[1].group.isEmpty());
+    QVERIFY(registry.globalApps().at(0).name == QStringLiteral("Discord"));
+
+    EditMiniAppsDialog again(&registry, QString());
+    auto *group = again.findChild<QLineEdit *>(QStringLiteral("miniAppGroupEdit"));
+    QVERIFY(group);
+    QCOMPARE(group->text(), QStringLiteral("Chat"));
+}
+
+void TestEditMiniAppsDialog::group_completerIncludesOtherScope()
+{
+    ApplicationSettings settings;
+    MiniAppRegistry registry(&settings);
+    MiniAppDefinition ws;
+    ws.id = QStringLiteral("ws-1");
+    ws.name = QStringLiteral("Console");
+    ws.url = QStringLiteral("https://aws.amazon.com");
+    ws.group = QStringLiteral("AWS");
+    registry.setWorkspaceApps(QStringLiteral("/tmp/ws"), {ws});
+
+    EditMiniAppsDialog dialog(&registry, QStringLiteral("/tmp/ws"));
+    buttonWithText(dialog, QStringLiteral("+"))->click();
+    auto *group = dialog.findChild<QLineEdit *>(QStringLiteral("miniAppGroupEdit"));
+    QVERIFY(group);
+    auto *completer = group->completer();
+    QVERIFY(completer);
+    QStringList suggestions;
+    const QAbstractItemModel *model = completer->model();
+    QVERIFY(model);
+    for (int i = 0; i < model->rowCount(); ++i)
+        suggestions.append(model->index(i, 0).data().toString());
+    QVERIFY(suggestions.contains(QStringLiteral("AWS")));
 }
 
 QTEST_MAIN(TestEditMiniAppsDialog)

@@ -6,9 +6,11 @@
  */
 
 #include "EditMiniAppsDialog.h"
+#include "MiniAppMenuLayout.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -25,6 +27,7 @@
 #include <QSet>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStringListModel>
 #include <QTcpServer>
 #include <QHostAddress>
 #include <QTimer>
@@ -130,6 +133,18 @@ EditMiniAppsDialog::EditMiniAppsDialog(MiniAppRegistry *registry,
     m_nameEdit = new QLineEdit(rightWidget);
     m_nameEdit->setPlaceholderText(tr("Display name (required)"));
     formLayout->addWidget(m_nameEdit);
+
+    formLayout->addWidget(new QLabel(tr("Group:"), rightWidget));
+    m_groupEdit = new QLineEdit(rightWidget);
+    m_groupEdit->setObjectName(QStringLiteral("miniAppGroupEdit"));
+    m_groupEdit->setPlaceholderText(tr("e.g. Chat/Work"));
+    m_groupCompleterModel = new QStringListModel(this);
+    m_groupCompleter = new QCompleter(m_groupCompleterModel, this);
+    m_groupCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    m_groupCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    m_groupCompleter->setFilterMode(Qt::MatchStartsWith);
+    m_groupEdit->setCompleter(m_groupCompleter);
+    formLayout->addWidget(m_groupEdit);
 
     formLayout->addWidget(new QLabel(tr("URL:"), rightWidget));
     m_urlEdit = new QLineEdit(rightWidget);
@@ -323,6 +338,7 @@ void EditMiniAppsDialog::loadScope(int scopeIndex)
     else
         loadApp(-1);
     updateButtonStates();
+    refreshGroupCompleter();
 }
 
 void EditMiniAppsDialog::saveCurrentScope()
@@ -350,6 +366,7 @@ void EditMiniAppsDialog::commitCurrentApp()
 
     MiniAppDefinition &def = m_apps[m_currentRow];
     def.name = m_nameEdit->text().trimmed();
+    def.group = m_groupEdit->text().trimmed();
     def.url = m_urlEdit->text().trimmed();
     def.command = m_commandEdit->text().trimmed();
     def.cwd = m_cwdEdit->text().trimmed();
@@ -375,12 +392,14 @@ void EditMiniAppsDialog::commitCurrentApp()
         m_listWidget->item(m_currentRow)->setText(
             def.name.isEmpty() ? def.url : def.name);
     }
+    refreshGroupCompleter();
 }
 
 void EditMiniAppsDialog::loadApp(int row)
 {
     const bool valid = (row >= 0 && row < m_apps.size());
     m_nameEdit->setEnabled(valid);
+    m_groupEdit->setEnabled(valid);
     m_urlEdit->setEnabled(valid);
     m_commandEdit->setEnabled(valid);
     m_cwdEdit->setEnabled(valid);
@@ -393,6 +412,7 @@ void EditMiniAppsDialog::loadApp(int row)
 
     if (!valid) {
         m_nameEdit->clear();
+        m_groupEdit->clear();
         m_urlEdit->clear();
         m_commandEdit->clear();
         m_cwdEdit->clear();
@@ -417,6 +437,7 @@ void EditMiniAppsDialog::loadApp(int row)
 
     const MiniAppDefinition &def = m_apps[row];
     m_nameEdit->setText(def.name);
+    m_groupEdit->setText(def.group);
     m_urlEdit->setText(def.url);
     m_commandEdit->setText(def.command);
     m_cwdEdit->setText(def.cwd);
@@ -467,6 +488,7 @@ void EditMiniAppsDialog::onRemoveClicked()
     else
         loadApp(-1);
     updateButtonStates();
+    refreshGroupCompleter();
 }
 
 void EditMiniAppsDialog::onMoveUpClicked()
@@ -585,6 +607,22 @@ void EditMiniAppsDialog::updateButtonStates()
     m_removeBtn->setEnabled(row >= 0);
     m_upBtn->setEnabled(row > 0);
     m_downBtn->setEnabled(row >= 0 && row < count - 1);
+}
+
+void EditMiniAppsDialog::refreshGroupCompleter()
+{
+    if (!m_groupCompleterModel)
+        return;
+    QList<MiniAppDefinition> all = m_apps;
+    if (m_registry) {
+        if (m_currentScope == 0) {
+            if (!m_workspacePath.isEmpty())
+                all += m_registry->workspaceApps(m_workspacePath);
+        } else {
+            all += m_registry->globalApps();
+        }
+    }
+    m_groupCompleterModel->setStringList(uniqueMiniAppGroups(all));
 }
 
 void EditMiniAppsDialog::onRandomPortClicked()

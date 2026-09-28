@@ -197,10 +197,22 @@ target_sources(test_edit_miniapps_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/MiniAppRegistry.cpp
     ${CMAKE_SOURCE_DIR}/src/MiniAppRegistry.h
     ${CMAKE_SOURCE_DIR}/src/MiniAppDefinition.h
+    ${CMAKE_SOURCE_DIR}/src/MiniAppMenuLayout.cpp
+    ${CMAKE_SOURCE_DIR}/src/MiniAppMenuLayout.h
     ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.cpp
     ${CMAKE_SOURCE_DIR}/src/ApplicationSettings.h
 )
 add_test(NAME EditMiniAppsDialog COMMAND test_edit_miniapps_dialog)
+
+# --- MiniAppMenuLayout: group A-Z then ungrouped ---
+qt_add_executable(test_mini_app_menu_layout test_mini_app_menu_layout.cpp)
+target_include_directories(test_mini_app_menu_layout PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_mini_app_menu_layout PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_mini_app_menu_layout PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/MiniAppMenuLayout.cpp
+    ${CMAKE_SOURCE_DIR}/src/MiniAppMenuLayout.h
+)
+add_test(NAME MiniAppMenuLayout COMMAND test_mini_app_menu_layout)
 
 # --- ScrollbackBuffer: bounded history ring used by TerminalWidget for sb_pushline/sb_popline ---
 qt_add_executable(test_scrollback_buffer test_scrollback_buffer.cpp)

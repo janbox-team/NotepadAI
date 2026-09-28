@@ -9,19 +9,28 @@
 
 #include "FaviconIcon.h"
 #include "BrowserProxyArgs.h"
+#include "BrowserTabPin.h"
 
+#include <QAction>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QHash>
 #include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeySequence>
+#include <QMenu>
+#include <QStyle>
+#include <QTabBar>
 #include <QMouseEvent>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QSet>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTabBar>
@@ -136,6 +145,39 @@ void injectPageScripts(ICoreWebView2 *webView)
     webView->AddScriptToExecuteOnDocumentCreated(kFetchJs, nullptr);
 }
 
+// add_* AddRefs. Drop our initial ref so the handler dies with the webview.
+void subscribeHandler(HRESULT hr, IUnknown *handler)
+{
+    Q_UNUSED(hr);
+    if (handler)
+        handler->Release();
+}
+
+constexpr int kMaxInWidgetTabs = 64;
+
+class InWidgetTabBar : public QTabBar
+{
+public:
+    explicit InWidgetTabBar(QWidget *parent = nullptr) : QTabBar(parent) {}
+
+protected:
+    QSize tabSizeHint(int index) const override
+    {
+        QSize s = QTabBar::tabSizeHint(index);
+        const int h = qMax(s.height(), 22);
+        if (tabData(index).toBool()) {
+            const int icon = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+            return {icon + 16, h};
+        }
+        return {qBound(72, s.width(), 180), h};
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return {72, QTabBar::minimumSizeHint().height()};
+    }
+};
+
 // WebView2 Windows implementation using the COM SDK directly.
 // Async initialization: HWND → Environment → Controller → WebView → Navigate.
 class WebViewWidgetWin : public WebViewWidget
@@ -154,14 +196,21 @@ public:
         , m_proxyBypassList(proxyBypassList)
         , m_allowCrossOrigin(allowCrossOrigin)
     {
-        m_tabBar = new QTabBar(this);
+        auto *tabRow = new QWidget(this);
+        auto *tabRowLayout = new QHBoxLayout(tabRow);
+        tabRowLayout->setContentsMargins(0, 0, 0, 0);
+        tabRowLayout->setSpacing(0);
+
+        m_tabBar = new InWidgetTabBar(tabRow);
         m_tabBar->setDocumentMode(true);
         m_tabBar->setExpanding(false);
         m_tabBar->setDrawBase(false);
         m_tabBar->setElideMode(Qt::ElideRight);
         m_tabBar->setTabsClosable(true);
+        m_tabBar->setMovable(true);
         m_tabBar->setUsesScrollButtons(true);
-        m_tabBar->hide();
+        m_tabBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
         m_tabBar->installEventFilter(this);
         connect(m_tabBar, &QTabBar::currentChanged, this, [this](int index) {
             if (!m_switching && index >= 0)
@@ -170,7 +219,67 @@ public:
         connect(m_tabBar, &QTabBar::tabCloseRequested, this, [this](int index) {
             closePage(index);
         });
-        mainLayout()->insertWidget(0, m_tabBar);
+        connect(m_tabBar, &QTabBar::tabMoved, this, [this](int from, int to) {
+            onInWidgetTabMoved(from, to);
+        });
+        connect(m_tabBar, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+            showInWidgetTabMenu(pos);
+        });
+        tabRowLayout->addWidget(m_tabBar, 0);
+
+        auto *newTabBtn = new QToolButton(tabRow);
+        newTabBtn->setAutoRaise(true);
+        newTabBtn->setText(QStringLiteral("+"));
+        newTabBtn->setToolTip(tr("New tab"));
+        connect(newTabBtn, &QToolButton::clicked, this, [this]() { openBlankTab(); });
+        tabRowLayout->addWidget(newTabBtn, 0, Qt::AlignVCenter);
+        tabRowLayout->addStretch(1);
+
+        m_tabRow = tabRow;
+        m_tabRow->hide();
+        mainLayout()->insertWidget(0, m_tabRow);
+
+        if (QHBoxLayout *bar = toolbarLayout()) {
+            QWidget *host = bar->parentWidget();
+            auto *toolbarNewTab = new QToolButton(host);
+            toolbarNewTab->setAutoRaise(true);
+            toolbarNewTab->setToolButtonStyle(Qt::ToolButtonTextOnly);
+            toolbarNewTab->setText(tr("+ New tab"));
+            toolbarNewTab->setToolTip(tr("New tab"));
+            QFont newTabFont = toolbarNewTab->font();
+            newTabFont.setPointSize(qMax(1, newTabFont.pointSize() - 1));
+            toolbarNewTab->setFont(newTabFont);
+            connect(toolbarNewTab, &QToolButton::clicked, this, [this]() { openBlankTab(); });
+
+            auto *sep = new QFrame(host);
+            sep->setFrameShape(QFrame::VLine);
+            sep->setFrameShadow(QFrame::Plain);
+            sep->setFixedWidth(1);
+            sep->setFixedHeight(14);
+            QPalette sepPal = sep->palette();
+            const QColor dim = palette().color(QPalette::Mid);
+            sepPal.setColor(QPalette::WindowText, dim);
+            sepPal.setColor(QPalette::Dark, dim);
+            sepPal.setColor(QPalette::Light, dim);
+            sep->setPalette(sepPal);
+            sep->setStyleSheet(QStringLiteral("color: palette(mid);"));
+
+            const int fit = toolbarFitIndex();
+            bar->insertWidget(fit, toolbarNewTab, 0, Qt::AlignVCenter);
+            bar->insertWidget(fit + 1, sep, 0, Qt::AlignVCenter);
+        }
+
+        auto *newTabAction = new QAction(this);
+        newTabAction->setShortcut(QKeySequence::AddTab);
+        newTabAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        addAction(newTabAction);
+        connect(newTabAction, &QAction::triggered, this, [this]() { openBlankTab(); });
+
+        auto *closeTabAction = new QAction(this);
+        closeTabAction->setShortcut(QKeySequence::Close);
+        closeTabAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        addAction(closeTabAction);
+        connect(closeTabAction, &QAction::triggered, this, [this]() { closePage(m_active); });
 
         m_stack = new QStackedWidget(this);
         mainLayout()->addWidget(m_stack, 1);
@@ -762,8 +871,11 @@ private:
         // Qt doesn't know focus left the previously focused widget, so clicking
         // back on that widget won't fire focusChanged (Qt thinks it already has
         // focus there).
-        EventRegistrationToken gotFocusToken;
-        m_controller->add_GotFocus(new GotFocusHandler(this), &gotFocusToken);
+        EventRegistrationToken token{};
+        auto *focus = new GotFocusHandler(this);
+        subscribeHandler(m_controller->add_GotFocus(focus, &token), focus);
+        auto *accel = new AcceleratorKeyPressedHandler(this);
+        subscribeHandler(m_controller->add_AcceleratorKeyPressed(accel, &token), accel);
 
         // Navigate is triggered from CspBypassHandler::Invoke after CDP completes.
     }
@@ -946,12 +1058,14 @@ private:
         ULONG STDMETHODCALLTYPE Release() override { if (--refCount == 0) { delete this; return 0; } return refCount; }
         HRESULT STDMETHODCALLTYPE Invoke(HRESULT errorCode, IStream *result) override {
             if (!alive->load(std::memory_order_acquire)) return S_OK;
-            if (!owner->isActiveWebView(page)) return S_OK;
-            if (FAILED(errorCode) || !result) {
-                emit owner->faviconChanged(QIcon());
-                return S_OK;
-            }
-            emit owner->faviconChanged(faviconIconFromData(bytesFromIStream(result)));
+            const QIcon icon = (FAILED(errorCode) || !result)
+                ? QIcon()
+                : faviconIconFromData(bytesFromIStream(result));
+            const int index = owner->pageIndexOf(page);
+            if (index >= 0)
+                owner->setPageIcon(index, icon);
+            if (owner->isActiveWebView(page))
+                emit owner->faviconChanged(icon);
             return S_OK;
         }
     };
@@ -1101,6 +1215,51 @@ private:
         }
     };
 
+    struct AcceleratorKeyPressedHandler : ICoreWebView2AcceleratorKeyPressedEventHandler {
+        WebViewWidgetWin *owner;
+        std::shared_ptr<std::atomic<bool>> alive;
+        ULONG refCount = 1;
+        AcceleratorKeyPressedHandler(WebViewWidgetWin *o) : owner(o), alive(o->m_alive) {}
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+            if (IsEqualIID(riid, IID_IUnknown)
+                || IsEqualIID(riid, IID_ICoreWebView2AcceleratorKeyPressedEventHandler)) {
+                *ppv = this; AddRef(); return S_OK;
+            }
+            *ppv = nullptr; return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+        ULONG STDMETHODCALLTYPE Release() override { if (--refCount == 0) { delete this; return 0; } return refCount; }
+        HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2Controller *,
+                                         ICoreWebView2AcceleratorKeyPressedEventArgs *args) override {
+            if (!alive->load(std::memory_order_acquire) || !args)
+                return S_OK;
+            COREWEBVIEW2_KEY_EVENT_KIND kind{};
+            args->get_KeyEventKind(&kind);
+            if (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN)
+                return S_OK;
+            COREWEBVIEW2_PHYSICAL_KEY_STATUS status{};
+            args->get_PhysicalKeyStatus(&status);
+            if (status.WasKeyDown)
+                return S_OK;
+            UINT key = 0;
+            args->get_VirtualKey(&key);
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+            if (!ctrl || shift || alt)
+                return S_OK;
+            if (key == 'T') {
+                args->put_Handled(TRUE);
+                QTimer::singleShot(0, owner, [o = owner]() { o->openBlankTab(); });
+            } else if (key == 'W') {
+                args->put_Handled(TRUE);
+                QTimer::singleShot(0, owner, [o = owner]() { o->closePage(o->m_active); });
+            }
+            return S_OK;
+        }
+    };
+
     // --- CDP Discovery ---
 
     void startCdpDiscovery()
@@ -1153,6 +1312,8 @@ private:
         ICoreWebView2 *webView = nullptr;
         QString title;
         QString url;
+        QIcon icon;
+        bool pinned = false;
     };
 
     struct PendingWindow {
@@ -1160,6 +1321,111 @@ private:
         ICoreWebView2Deferral *deferral = nullptr;
         quint64 pageId = 0;
     };
+
+    void applyTabChrome(int index)
+    {
+        if (!m_tabBar || index < 0 || index >= m_pages.size() || index >= m_tabBar->count())
+            return;
+        const Page &page = m_pages[index];
+        m_tabBar->setTabData(index, page.pinned);
+        const QString label = page.title.isEmpty() ? tr("New tab") : page.title;
+        m_tabBar->setTabText(index, page.pinned ? QString() : label);
+        m_tabBar->setTabToolTip(index, page.title.isEmpty() ? page.url : page.title);
+        m_tabBar->setTabIcon(index, page.icon);
+        if (QWidget *closeBtn = m_tabBar->tabButton(index, QTabBar::RightSide))
+            closeBtn->setVisible(!page.pinned);
+    }
+
+    void setPageIcon(int index, const QIcon &icon)
+    {
+        if (index < 0 || index >= m_pages.size())
+            return;
+        m_pages[index].icon = icon;
+        applyTabChrome(index);
+    }
+
+    void setPagePinned(int index, bool pinned)
+    {
+        if (index < 0 || index >= m_pages.size() || m_pages[index].pinned == pinned)
+            return;
+        m_pages[index].pinned = pinned;
+        applyTabChrome(index);
+        QVector<bool> flags;
+        flags.reserve(m_pages.size());
+        for (const Page &page : m_pages)
+            flags.append(page.pinned);
+        const int to = browserTabPinMoveTarget(flags, index, pinned);
+        if (to != index && m_tabBar) {
+            m_switching = true;
+            m_tabBar->moveTab(index, to);
+            m_pages.move(index, to);
+            m_switching = false;
+        }
+        if (m_tabBar)
+            m_active = m_tabBar->currentIndex();
+    }
+
+    void onInWidgetTabMoved(int from, int to)
+    {
+        if (m_switching || from == to)
+            return;
+        if (from < 0 || to < 0 || from >= m_pages.size() || to >= m_pages.size())
+            return;
+        m_pages.move(from, to);
+        int pinnedCount = 0;
+        for (const Page &page : m_pages) {
+            if (page.pinned)
+                ++pinnedCount;
+        }
+        const bool pinned = m_pages[to].pinned;
+        int corrected = to;
+        if (pinned && to >= pinnedCount)
+            corrected = pinnedCount - 1;
+        else if (!pinned && to < pinnedCount)
+            corrected = pinnedCount;
+        if (corrected != to && m_tabBar) {
+            m_switching = true;
+            m_tabBar->moveTab(to, corrected);
+            m_pages.move(to, corrected);
+            m_switching = false;
+        }
+        if (m_tabBar)
+            m_active = m_tabBar->currentIndex();
+    }
+
+    void showInWidgetTabMenu(const QPoint &pos)
+    {
+        if (!m_tabBar)
+            return;
+        const int idx = m_tabBar->tabAt(pos);
+        if (idx < 0 || idx >= m_pages.size())
+            return;
+        const quint64 id = m_pages[idx].id;
+        const bool pinned = m_pages[idx].pinned;
+        QMenu menu(m_tabBar);
+        menu.addAction(pinned ? tr("Unpin") : tr("Pin"), this, [this, id, pinned]() {
+            const int i = pageIndexById(id);
+            if (i >= 0)
+                setPagePinned(i, !pinned);
+        });
+        menu.addAction(tr("Close"), this, [this, id]() {
+            const int i = pageIndexById(id);
+            if (i >= 0)
+                closePage(i);
+        });
+        menu.exec(m_tabBar->mapToGlobal(pos));
+    }
+
+    bool canSpawnInWidgetTab() const
+    {
+        return m_environment && m_stack && m_tabBar && m_pages.size() < kMaxInWidgetTabs;
+    }
+
+    void syncTabRowVisible()
+    {
+        if (m_tabRow)
+            m_tabRow->setVisible(m_pages.size() > 1);
+    }
 
     void registerInitialPage()
     {
@@ -1179,13 +1445,60 @@ private:
         m_tabBar->addTab(page.title.isEmpty() ? tr("New tab") : page.title);
         m_tabBar->setTabToolTip(0, page.url);
         m_switching = false;
+        applyTabChrome(0);
+        syncTabRowVisible();
+    }
+
+    void openBlankTab()
+    {
+        if (!canSpawnInWidgetTab())
+            return;
+
+        auto *host = new QWidget(m_stack);
+        host->setAttribute(Qt::WA_NativeWindow);
+        host->setAttribute(Qt::WA_DontCreateNativeAncestors, false);
+        host->setFocusPolicy(Qt::ClickFocus);
+        styleViewportHost(host);
+        m_stack->addWidget(host);
+
+        Page page;
+        page.id = ++m_nextPageId;
+        page.host = host;
+        page.hwnd = reinterpret_cast<HWND>(host->winId());
+        page.title = tr("New tab");
+        page.url = QStringLiteral("about:blank");
+        m_pages.append(page);
+        const int index = m_pages.size() - 1;
+
+        m_switching = true;
+        m_tabBar->addTab(page.title);
+        m_tabBar->setTabToolTip(index, page.url);
+        m_switching = false;
+        applyTabChrome(index);
+        syncTabRowVisible();
+
+        activatePage(index);
+        focusUrlBar();
+
+        auto *handler = new ControllerCompletedHandler(this, page.id, host);
+        m_inflightPages.insert(page.id);
+        const HRESULT createHr = m_environment->CreateCoreWebView2Controller(page.hwnd, handler);
+        if (FAILED(createHr)) {
+            m_inflightPages.remove(page.id);
+            handler->Release();
+            qWarning("WebView: CreateCoreWebView2Controller failed (0x%08X)",
+                     static_cast<unsigned>(createHr));
+            dropFailedPage(pageIndexById(page.id));
+        } else {
+            handler->Release();
+        }
     }
 
     void beginNewWindow(ICoreWebView2NewWindowRequestedEventArgs *args)
     {
         if (!args)
             return;
-        if (!m_environment || !m_stack || !m_tabBar) {
+        if (!canSpawnInWidgetTab()) {
             args->put_Handled(TRUE);
             return;
         }
@@ -1229,8 +1542,8 @@ private:
         m_tabBar->addTab(title);
         m_tabBar->setTabToolTip(index, url);
         m_switching = false;
-        if (m_pages.size() > 1)
-            m_tabBar->show();
+        applyTabChrome(index);
+        syncTabRowVisible();
 
         m_pending.append(PendingWindow{args, deferral, page.id});
         qInfo("WebView: opening tab %s", qUtf8Printable(url.isEmpty() ? title : url));
@@ -1350,10 +1663,17 @@ private:
             pending.deferral->Complete();
             pending.deferral->Release();
         }
-        if (ok)
+        if (ok) {
+            if (!pending.args && m_pages[index].webView) {
+                m_pages[index].webView->Navigate(L"about:blank");
+                m_pages[index].url = QStringLiteral("about:blank");
+            }
             activatePage(index);
-        else if (index >= 0)
+            if (!pending.args)
+                focusUrlBar();
+        } else if (index >= 0) {
             dropFailedPage(index);
+        }
     }
 
     void wirePageEvents(ICoreWebView2 *webView, ICoreWebView2Controller *controller)
@@ -1361,37 +1681,33 @@ private:
         if (!webView)
             return;
         EventRegistrationToken token{};
-        // add_* AddRefs. Drop our initial ref so the handler dies with the webview.
-        auto subscribe = [](HRESULT hr, IUnknown *handler) {
-            Q_UNUSED(hr);
-            if (handler)
-                handler->Release();
-        };
         auto *nav = new NavigationCompletedHandler(this);
-        subscribe(webView->add_NavigationCompleted(nav, &token), nav);
+        subscribeHandler(webView->add_NavigationCompleted(nav, &token), nav);
         auto *proc = new ProcessFailedHandler(this);
-        subscribe(webView->add_ProcessFailed(proc, &token), proc);
+        subscribeHandler(webView->add_ProcessFailed(proc, &token), proc);
         auto *title = new DocumentTitleChangedHandler(this);
-        subscribe(webView->add_DocumentTitleChanged(title, &token), title);
+        subscribeHandler(webView->add_DocumentTitleChanged(title, &token), title);
         auto *win = new NewWindowRequestedHandler(this);
-        subscribe(webView->add_NewWindowRequested(win, &token), win);
+        subscribeHandler(webView->add_NewWindowRequested(win, &token), win);
         auto *closed = new WindowCloseRequestedHandler(this);
-        subscribe(webView->add_WindowCloseRequested(closed, &token), closed);
+        subscribeHandler(webView->add_WindowCloseRequested(closed, &token), closed);
         auto *src = new SourceChangedHandler(this);
-        subscribe(webView->add_SourceChanged(src, &token), src);
+        subscribeHandler(webView->add_SourceChanged(src, &token), src);
         auto *msg = new WebMessageReceivedHandler(this);
-        subscribe(webView->add_WebMessageReceived(msg, &token), msg);
+        subscribeHandler(webView->add_WebMessageReceived(msg, &token), msg);
         ICoreWebView2_15 *webView15 = nullptr;
         if (SUCCEEDED(webView->QueryInterface(IID_ICoreWebView2_15,
                                               reinterpret_cast<void **>(&webView15)))
             && webView15) {
             auto *fav = new FaviconChangedHandler(this);
-            subscribe(webView15->add_FaviconChanged(fav, &token), fav);
+            subscribeHandler(webView15->add_FaviconChanged(fav, &token), fav);
             webView15->Release();
         }
         if (controller) {
             auto *focus = new GotFocusHandler(this);
-            subscribe(controller->add_GotFocus(focus, &token), focus);
+            subscribeHandler(controller->add_GotFocus(focus, &token), focus);
+            auto *accel = new AcceleratorKeyPressedHandler(this);
+            subscribeHandler(controller->add_AcceleratorKeyPressed(accel, &token), accel);
         }
     }
 
@@ -1453,14 +1769,13 @@ private:
             page.host->deleteLater();
         }
 
-        if (m_pages.size() < 2 && m_tabBar)
-            m_tabBar->hide();
         int next = m_active;
         if (index < m_active)
             --next;
         if (next >= m_pages.size())
             next = m_pages.size() - 1;
         activatePage(next);
+        syncTabRowVisible();
     }
 
     void closePageFor(ICoreWebView2 *webView)
@@ -1488,8 +1803,6 @@ private:
         }
         if (page.host)
             page.host->deleteLater();
-        if (m_pages.size() < 2 && m_tabBar)
-            m_tabBar->hide();
         if (index < m_active)
             --m_active;
         if (m_active >= m_pages.size())
@@ -1497,6 +1810,7 @@ private:
         if (!m_pages.isEmpty() && m_stack && m_pages[m_active].host
             && m_stack->currentWidget() != m_pages[m_active].host)
             activatePage(m_active);
+        syncTabRowVisible();
     }
 
     PendingWindow takePending(quint64 pageId)
@@ -1563,8 +1877,7 @@ private:
         const int index = pageIndexOf(sender);
         if (index >= 0) {
             m_pages[index].title = title;
-            if (m_tabBar && index < m_tabBar->count())
-                m_tabBar->setTabText(index, title.isEmpty() ? tr("New tab") : title);
+            applyTabChrome(index);
         }
         if (sender == m_webView)
             emit titleChanged(title);
@@ -1597,6 +1910,7 @@ private:
     int m_metricsH = 0;
     int m_metricsDpr = 0;
     QTimer *m_emulationTimer = nullptr;
+    QWidget *m_tabRow = nullptr;
     QTabBar *m_tabBar = nullptr;
     QStackedWidget *m_stack = nullptr;
     QVector<Page> m_pages;

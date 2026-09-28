@@ -13,6 +13,7 @@ struct MiniAppDefinition
 {
     QString id;               // UUID string
     QString name;             // Display name (required)
+    QString group;            // Optional menu group; empty = ungrouped
     QString url;              // http/https URL (required)
     QString command;          // Shell command to spawn (optional)
     QString env;              // KEY=VALUE lines (optional)

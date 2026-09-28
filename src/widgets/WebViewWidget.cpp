@@ -313,6 +313,20 @@ void WebViewWidget::setupToolbar()
     rebuildToolbarIcons();
 }
 
+int WebViewWidget::toolbarFitIndex() const
+{
+    if (!m_toolbarLayout)
+        return 0;
+    if (m_viewportGroup) {
+        if (QAbstractButton *fit = m_viewportGroup->button(static_cast<int>(ViewportMode::Fit))) {
+            const int i = m_toolbarLayout->indexOf(fit);
+            if (i >= 0)
+                return i;
+        }
+    }
+    return m_toolbarLayout->count();
+}
+
 void WebViewWidget::setViewportMode(ViewportMode mode)
 {
     if (m_viewportGroup) {
@@ -333,6 +347,14 @@ void WebViewWidget::styleViewportHost(QWidget *host) const
     QPalette p = host->palette();
     p.setColor(QPalette::Window, palette().color(QPalette::Window).darker(125));
     host->setPalette(p);
+}
+
+void WebViewWidget::focusUrlBar()
+{
+    if (!m_urlEdit)
+        return;
+    m_urlEdit->setFocus();
+    m_urlEdit->selectAll();
 }
 
 void WebViewWidget::setLoading(bool loading)

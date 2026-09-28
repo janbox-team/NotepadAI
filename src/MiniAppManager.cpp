@@ -29,6 +29,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProcess>
 #include <QSet>
 #include <QStandardPaths>
@@ -276,9 +277,19 @@ void MiniAppManager::restorePinnedTabs()
             launchQuickBrowser(url);
             if (!m_quickBrowserTabs.isEmpty()) {
                 ads::CDockWidget *dw = m_quickBrowserTabs.last().dockWidget;
+                WebViewWidget *wv = m_quickBrowserTabs.last().webView;
                 if (dw) {
-                    dw->setProperty("nnPinKey", key);
-                    setDockTabPinned(dw, true);
+                    markRestoredPin(dw, key);
+                    if (wv) {
+                        connect(wv, &WebViewWidget::navigationCompleted, this,
+                                [this, dw = QPointer<ads::CDockWidget>(dw)](bool, const QString &) {
+                            finishRestoredPinMove(dw);
+                        });
+                        connect(wv, &WebViewWidget::processFailed, this,
+                                [this, dw = QPointer<ads::CDockWidget>(dw)](const QString &) {
+                            finishRestoredPinMove(dw);
+                        });
+                    }
                 }
             }
 #endif
@@ -288,15 +299,43 @@ void MiniAppManager::restorePinnedTabs()
                 continue;
             launchApp(def);
             if (!m_instances.isEmpty()) {
-                ads::CDockWidget *dw = m_instances.last()->dockWidget();
+                MiniAppInstance *inst = m_instances.last();
+                ads::CDockWidget *dw = inst->dockWidget();
                 if (dw) {
-                    dw->setProperty("nnPinKey", key);
-                    setDockTabPinned(dw, true);
+                    markRestoredPin(dw, key);
+                    const MiniAppInstance::State s = inst->state();
+                    if (s == MiniAppInstance::Running || s == MiniAppInstance::Failed
+                        || s == MiniAppInstance::Crashed) {
+                        finishRestoredPinMove(dw);
+                    }
                 }
             }
         }
     }
     m_restoringPins = false;
+}
+
+void MiniAppManager::markRestoredPin(ads::CDockWidget *dw, const QString &key)
+{
+    // Pin chrome now, but do not addDockWidget-move yet: that reinserts the
+    // tab and recreates the WebView2 parent HWND while CreateController is
+    // still in flight, which leaves a white page.
+    if (!dw)
+        return;
+    dw->setProperty("nnPinKey", key);
+    dw->setProperty("nnPinned", true);
+    dw->setProperty("nnPendingRestorePinMove", true);
+    dw->setFeature(ads::CDockWidget::DockWidgetClosable, false);
+    if (dw->tabWidget())
+        applyBrowserTabPinChrome(dw->tabWidget(), true, dw->windowTitle());
+}
+
+void MiniAppManager::finishRestoredPinMove(ads::CDockWidget *dw)
+{
+    if (!dw || !dw->property("nnPendingRestorePinMove").toBool())
+        return;
+    dw->setProperty("nnPendingRestorePinMove", QVariant());
+    moveDockTabToPinCluster(dw, true);
 }
 
 void MiniAppManager::launchApp(const MiniAppDefinition &def)
@@ -470,6 +509,12 @@ void MiniAppManager::onInstanceStateChanged(MiniAppInstance *instance)
             qInfo("MiniApp: %s webview initialize", qUtf8Printable(instance->appName()));
             connect(webView, &WebViewWidget::closeRequested, dw, &ads::CDockWidget::closeDockWidget);
         }
+    }
+
+    const MiniAppInstance::State s = instance->state();
+    if (s == MiniAppInstance::Running || s == MiniAppInstance::Failed
+        || s == MiniAppInstance::Crashed) {
+        finishRestoredPinMove(instance->dockWidget());
     }
 }
 

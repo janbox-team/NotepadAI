@@ -84,6 +84,16 @@ constexpr Entry kEntries[] = {
 
 namespace DockTabContextMenu {
 
+QDockWidget *dockFromTabData(const QVariant &data)
+{
+    if (data.userType() != qMetaTypeId<quintptr>())
+        return nullptr;
+    const quintptr bits = data.value<quintptr>();
+    if (bits == 0)
+        return nullptr;
+    return qobject_cast<QDockWidget *>(reinterpret_cast<QWidget *>(bits));
+}
+
 QList<QDockWidget *> tabOrder(QTabBar *tabBar)
 {
     if (tabBar == nullptr || tabBar->count() == 0)
@@ -98,11 +108,7 @@ QList<QDockWidget *> tabOrder(QTabBar *tabBar)
     QList<QDockWidget *> order;
     order.reserve(tabBar->count());
     for (int i = 0; i < tabBar->count(); ++i) {
-        const QVariant data = tabBar->tabData(i);
-        if (!data.isValid())
-            return {};
-        auto *widget = reinterpret_cast<QWidget *>(qvariant_cast<quintptr>(data));
-        auto *dock = qobject_cast<QDockWidget *>(widget);
+        QDockWidget *dock = dockFromTabData(tabBar->tabData(i));
         if (dock == nullptr)
             return {};
         order.append(dock);

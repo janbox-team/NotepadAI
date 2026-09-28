@@ -494,6 +494,8 @@ qt_add_executable(NotepadAI
 	TerminalTaskRegistry.h
 	TerminalTaskRegistry.cpp
 	MiniAppDefinition.h
+	MiniAppMenuLayout.h
+	MiniAppMenuLayout.cpp
 	MiniAppRegistry.h
 	MiniAppRegistry.cpp
 	MiniAppInstance.h

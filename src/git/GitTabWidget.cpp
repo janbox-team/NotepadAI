@@ -142,8 +142,7 @@ GitTabWidget::GitTabWidget(const QString &workspaceRoot, QWidget *parent)
     m_successTimer.setSingleShot(true);
     m_successTimer.setInterval(2000);
     connect(&m_successTimer, &QTimer::timeout, this, [this]() {
-        m_statusLabel->clear();
-        m_statusLabel->hide();
+        showIdleStatus();
     });
 
     if (auto *app = qobject_cast<NotepadNextApplication *>(QCoreApplication::instance())) {
@@ -301,11 +300,8 @@ void GitTabWidget::buildUi()
 
     // Status label — created here, added to layout at the bottom.
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet(QStringLiteral(
-        "color: palette(placeholder-text); font-size: 11px;"
-        "border: none; padding: 0px; background: transparent;"));
     m_statusLabel->setWordWrap(true);
-    m_statusLabel->hide();
+    showIdleStatus();
 
     // Segmented bar Changes / History.
     m_segmentedBar = new GitTabSegmentedBar(this);
@@ -596,8 +592,7 @@ void GitTabWidget::rebuildController()
     if (m_changesPanel && m_changesPanel->composer()) {
         m_changesPanel->composer()->clear();
     }
-    m_statusLabel->clear();
-    m_statusLabel->hide();
+    showIdleStatus();
     clearError();
 
     const bool hasWorkspace = !m_workspaceRoot.isEmpty()
@@ -1553,8 +1548,12 @@ void GitTabWidget::clearError()
 
 void GitTabWidget::appendStatus(const QString &msg)
 {
+    if (msg.isEmpty()) {
+        showIdleStatus();
+        return;
+    }
     m_statusLabel->setText(msg);
-    m_statusLabel->setVisible(!msg.isEmpty());
+    m_statusLabel->show();
 }
 
 void GitTabWidget::setStatusBusy(BusyOwner owner, const QString &text)
@@ -1578,11 +1577,17 @@ void GitTabWidget::clearStatusBusy(BusyOwner owner)
     if (m_aiBusyTimer.isActive()) m_aiBusyTimer.stop();
     m_aiBusyBase.clear();
     m_busyOwner = BusyOwner::None;
+    showIdleStatus();
+}
+
+void GitTabWidget::showIdleStatus()
+{
     m_statusLabel->setStyleSheet(QStringLiteral(
         "color: palette(placeholder-text); font-size: 11px;"
-        "border: none; padding: 0px; background: transparent;"));
-    m_statusLabel->clear();
-    m_statusLabel->hide();
+        "border: 1px solid transparent; border-radius: 4px;"
+        "padding: 2px 6px; background: transparent;"));
+    m_statusLabel->setText(tr("no changes."));
+    m_statusLabel->show();
 }
 
 void GitTabWidget::flashStatusSuccess(const QString &text)

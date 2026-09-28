@@ -103,6 +103,7 @@
 #include "EditTasksDialog.h"
 #include "MiniAppManager.h"
 #include "MiniAppRegistry.h"
+#include "MiniAppMenuLayout.h"
 #include "QuickBrowseUrl.h"
 #include "EmbeddedWindowManager.h"
 #include "EditMiniAppsDialog.h"
@@ -207,6 +208,29 @@ QString resolveDockObjectName(QWidget *w)
         w = w->parentWidget();
     }
     return {};
+}
+
+void appendMiniAppMenuNode(QMenu *menu, QAction *before, const MiniAppMenuNode &node,
+                           MiniAppManager *manager)
+{
+    if (!menu || !manager)
+        return;
+    for (const MiniAppMenuNode &child : node.children) {
+        auto *sub = new QMenu(child.name, menu);
+        appendMiniAppMenuNode(sub, nullptr, child, manager);
+        if (before)
+            menu->insertMenu(before, sub);
+        else
+            menu->addMenu(sub);
+    }
+    for (const MiniAppDefinition &def : node.apps) {
+        QAction *a = before ? new QAction(def.name, menu) : menu->addAction(def.name);
+        QObject::connect(a, &QAction::triggered, manager, [manager, def]() {
+            manager->launchApp(def);
+        });
+        if (before)
+            menu->insertAction(before, a);
+    }
 }
 
 // Connects a QAction's triggered() to CrashContext::setLastAction so we know
@@ -1878,41 +1902,20 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
     connect(ui->menuMiniAppsSub, &QMenu::aboutToShow, this, [this]() {
         // Clear dynamic items (keep only the static "Edit Mini Apps..." action)
         while (ui->menuMiniAppsSub->actions().size() > 1) {
-            delete ui->menuMiniAppsSub->actions().first();
+            QAction *a = ui->menuMiniAppsSub->actions().first();
+            QMenu *sub = a->menu();
+            delete a;
+            delete sub;
         }
 
         const QString workspaceRoot = currentWorkspaceRoot();
-        const QList<MiniAppDefinition> globalApps = m_miniAppRegistry->globalApps();
-        const QList<MiniAppDefinition> wsApps = workspaceRoot.isEmpty()
-            ? QList<MiniAppDefinition>()
-            : m_miniAppRegistry->workspaceApps(workspaceRoot);
+        const QList<MiniAppDefinition> apps = m_miniAppRegistry->mergedApps(workspaceRoot);
+        const MiniAppMenuNode tree = buildMiniAppMenuTree(apps);
 
         QAction *beforeAction = ui->actionEditMiniApps;
+        appendMiniAppMenuNode(ui->menuMiniAppsSub, beforeAction, tree, m_miniAppManager);
 
-        // Global apps
-        for (const MiniAppDefinition &def : globalApps) {
-            QAction *a = new QAction(def.name, ui->menuMiniAppsSub);
-            connect(a, &QAction::triggered, this, [this, def]() {
-                m_miniAppManager->launchApp(def);
-            });
-            ui->menuMiniAppsSub->insertAction(beforeAction, a);
-        }
-
-        // Separator + workspace apps
-        if (!wsApps.isEmpty()) {
-            if (!globalApps.isEmpty())
-                ui->menuMiniAppsSub->insertSeparator(beforeAction);
-            for (const MiniAppDefinition &def : wsApps) {
-                QAction *a = new QAction(def.name, ui->menuMiniAppsSub);
-                connect(a, &QAction::triggered, this, [this, def]() {
-                    m_miniAppManager->launchApp(def);
-                });
-                ui->menuMiniAppsSub->insertAction(beforeAction, a);
-            }
-        }
-
-        // Separator before Edit action (if any apps exist)
-        if (!globalApps.isEmpty() || !wsApps.isEmpty())
+        if (!apps.isEmpty())
             ui->menuMiniAppsSub->insertSeparator(beforeAction);
     });
 

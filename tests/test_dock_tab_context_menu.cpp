@@ -71,6 +71,7 @@ private slots:
     void tabOrder_tabifiedDocks_resolvesInTabOrder();
     void tabOrder_plainTabBarSharingADockTitle_isEmpty();
     void tabOrder_tabBarNotUnderMainWindow_stillResolves();
+    void tabOrder_boolTabData_isEmpty();
 
     void closeTargets_close_returnsOnlyClicked();
     void closeTargets_closeOthers_returnsEveryOtherTab();
@@ -162,6 +163,17 @@ void TestDockTabContextMenu::tabOrder_tabBarNotUnderMainWindow_stillResolves()
     bar.setTabData(1, QVariant::fromValue(reinterpret_cast<quintptr>(static_cast<QWidget *>(b))));
 
     QCOMPARE(titlesOf(DockTabContextMenu::tabOrder(&bar)), (QStringList{"a", "b"}));
+}
+
+void TestDockTabContextMenu::tabOrder_boolTabData_isEmpty()
+{
+    QTabBar bar;
+    bar.addTab(QStringLiteral("page"));
+    bar.setTabData(0, true);
+    QVERIFY(DockTabContextMenu::tabOrder(&bar).isEmpty());
+    QVERIFY(DockTabContextMenu::dockFromTabData(bar.tabData(0)) == nullptr);
+    bar.setTabData(0, false);
+    QVERIFY(DockTabContextMenu::tabOrder(&bar).isEmpty());
 }
 
 // --- closeTargets: which docks each scope closes -----------------------------

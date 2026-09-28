@@ -26,6 +26,7 @@ class QDockWidget;
 class QMenu;
 class QPoint;
 class QTabBar;
+class QVariant;
 
 // Right-click menu for Qt's internal dock tab bar — the strip shown when docks
 // are tabified (workspace, terminal, task, AI, git...). The editor area is ADS,
@@ -42,6 +43,10 @@ enum class Scope : std::uint8_t {
     CloseToRight,
     CloseAll,
 };
+
+// Qt stores each dock as quintptr in tabData. Any other payload (bool pin
+// flags, ints) must not be cast — bool true converts to 0x1 and qobject_cast AVs.
+QDockWidget *dockFromTabData(const QVariant &data);
 
 // The docks behind `tabBar`, in tab order (which is drag-reorderable and so is
 // NOT the order docks were added). Empty when `tabBar` is not a dock tab bar —

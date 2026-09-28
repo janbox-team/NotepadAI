@@ -96,12 +96,11 @@ QDockWidget *dockForTab(QTabBar *tabBar, int index)
 
     // Qt stores the QDockWidget pointer (as quintptr) in each tab's data.
     // This is the only unambiguous mapping when multiple docks share a title.
+    // Valid non-pointer payloads (in-widget pin bool) are not dock tabs —
+    // do not fall through to title match, which would close a same-titled dock.
     const QVariant data = tabBar->tabData(index);
-    if (data.isValid()) {
-        auto *widget = reinterpret_cast<QWidget *>(qvariant_cast<quintptr>(data));
-        if (auto *dock = qobject_cast<QDockWidget *>(widget))
-            return dock;
-    }
+    if (data.isValid())
+        return DockTabContextMenu::dockFromTabData(data);
 
     // Fallback: title match (ambiguous with duplicate titles, but covers the
     // case where tabData is not populated).

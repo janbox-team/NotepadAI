@@ -193,6 +193,7 @@ private:
     void setStatusBusy(BusyOwner owner, const QString &text);
     void clearStatusBusy(BusyOwner owner);
     void flashStatusSuccess(const QString &text);
+    void showIdleStatus();
 
     // Tab indices in segmented bar / stack.
     static constexpr int kTabChanges = 0;

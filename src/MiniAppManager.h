@@ -68,6 +68,8 @@ private:
     void forgetPinKey(ads::CDockWidget *dw);
     void prunePinnedMiniAppKeys();
     void restorePinnedTabs();
+    void markRestoredPin(ads::CDockWidget *dw, const QString &key);
+    void finishRestoredPinMove(ads::CDockWidget *dw);
 
     NotepadNextApplication *m_app;
     MiniAppRegistry *m_registry;

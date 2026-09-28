@@ -120,6 +120,8 @@ public:
 
 protected:
     QVBoxLayout *mainLayout() const { return m_mainLayout; }
+    QHBoxLayout *toolbarLayout() const { return m_toolbarLayout; }
+    int toolbarFitIndex() const;
     QString appId() const { return m_appId; }
     QUrl initialUrl() const { return m_url; }
 
@@ -135,6 +137,7 @@ protected:
     }
     virtual void applyViewport() {}
     void styleViewportHost(QWidget *host) const;
+    void focusUrlBar();
 
 private:
     void setupToolbar();

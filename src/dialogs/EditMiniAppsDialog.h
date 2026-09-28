@@ -15,6 +15,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QCompleter;
 class QDialogButtonBox;
 class QGroupBox;
 class QLabel;
@@ -23,6 +24,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
+class QStringListModel;
 class QTimer;
 class QToolButton;
 
@@ -52,6 +54,7 @@ private:
     void updateButtonStates();
     void loadScope(int scopeIndex);
     void saveCurrentScope();
+    void refreshGroupCompleter();
 
     MiniAppRegistry *m_registry;
     QString m_workspacePath;
@@ -67,6 +70,9 @@ private:
     QPushButton *m_downBtn = nullptr;
 
     QLineEdit *m_nameEdit = nullptr;
+    QLineEdit *m_groupEdit = nullptr;
+    QCompleter *m_groupCompleter = nullptr;
+    QStringListModel *m_groupCompleterModel = nullptr;
     QLineEdit *m_urlEdit = nullptr;
     QLineEdit *m_commandEdit = nullptr;
     QLineEdit *m_cwdEdit = nullptr;

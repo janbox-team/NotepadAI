@@ -21,6 +21,7 @@ MiniAppDefinition definitionFromJson(const QJsonObject &obj)
     MiniAppDefinition def;
     def.id = obj.value(QStringLiteral("id")).toString();
     def.name = obj.value(QStringLiteral("name")).toString();
+    def.group = obj.value(QStringLiteral("group")).toString().trimmed();
     def.url = obj.value(QStringLiteral("url")).toString();
     def.command = obj.value(QStringLiteral("command")).toString();
     def.env = obj.value(QStringLiteral("env")).toString();
@@ -62,6 +63,7 @@ QJsonObject definitionToJson(const MiniAppDefinition &def)
     obj.insert(QStringLiteral("id"), def.id.isEmpty()
         ? QUuid::createUuid().toString(QUuid::WithoutBraces) : def.id);
     obj.insert(QStringLiteral("name"), def.name);
+    if (!def.group.isEmpty()) obj.insert(QStringLiteral("group"), def.group);
     obj.insert(QStringLiteral("url"), def.url);
     if (!def.command.isEmpty()) obj.insert(QStringLiteral("command"), def.command);
     if (!def.env.isEmpty()) obj.insert(QStringLiteral("env"), def.env);
