@@ -24,6 +24,7 @@
 #include "AcpMessageWidget.h"
 #include "AcpPermissionPrompt.h"
 #include "AcpPlanWidget.h"
+#include "AcpPromptQueueStrip.h"
 #include "AcpSessionModel.h"
 #include "AcpToolCallCard.h"
 #include "AcpTranscriptTruncation.h"
@@ -71,6 +72,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <utility>
 
 namespace {
 
@@ -494,6 +497,13 @@ void AcpSessionView::buildUi()
 
     m_goalStatusRow->hide();
     outer->addWidget(m_goalStatusRow);
+
+    m_queueStrip = new AcpPromptQueueStrip(this);
+    connect(m_queueStrip, &AcpPromptQueueStrip::removeRequested, this, [this](int index) {
+        m_promptQueue.removeAt(index);
+        refreshQueueStrip();
+    });
+    outer->addWidget(m_queueStrip);
 
     // 6. Input.
     auto *cb = new ChatInputEditCb(m_attachmentList, this);
@@ -1491,6 +1501,9 @@ void AcpSessionView::onIsProcessingChanged(bool processing)
     // Recompute the input busy-placeholder against the new ACP state (it also
     // depends on m_goalRunning, so the union is resolved inside).
     refreshBusyPlaceholder();
+
+    if (!processing && m_promptQueue.size() > 0)
+        scheduleFlushQueuedPrompt();
 }
 
 void AcpSessionView::onTurnEnded(int groupId)
@@ -1691,22 +1704,104 @@ void AcpSessionView::updateSendButton()
     const QString text = m_input ? m_input->toPlainText() : QString();
     const bool hasContent = !text.trimmed().isEmpty()
         || (m_attachmentList && m_attachmentList->isNonEmpty());
-    const bool processing = m_model && m_model->isProcessing();
-    const bool sideGoal = GoalAgent::isNativeGoalSlash(text);
-    const bool canSend = hasContent && (!processing || sideGoal);
-    m_sendBtn->setEnabled(canSend);
-    m_sendBtn->setVisible(!processing || sideGoal);
+    m_sendBtn->setEnabled(hasContent);
+}
+
+void AcpSessionView::refreshQueueStrip()
+{
+    if (!m_queueStrip)
+        return;
+    QStringList previews;
+    previews.reserve(m_promptQueue.size());
+    for (const auto &item : m_promptQueue.items()) {
+        QString preview = item.text.trimmed();
+        const int nl = preview.indexOf(QLatin1Char('\n'));
+        if (nl >= 0)
+            preview = preview.left(nl);
+        if (preview.isEmpty() && !item.images.isEmpty())
+            preview = tr("Attached image");
+        previews.append(preview);
+    }
+    m_queueStrip->setItems(previews);
+}
+
+void AcpSessionView::scheduleFlushQueuedPrompt()
+{
+    if (m_flushQueuedScheduled)
+        return;
+    m_flushQueuedScheduled = true;
+    QPointer<AcpSessionView> guard(this);
+    QTimer::singleShot(0, this, [guard]() {
+        if (!guard)
+            return;
+        guard->m_flushQueuedScheduled = false;
+        guard->flushQueuedPrompt();
+        if (!guard)
+            return;
+        if (guard->m_model && !guard->m_model->isProcessing()
+            && guard->m_promptQueue.size() > 0) {
+            guard->scheduleFlushQueuedPrompt();
+        }
+    });
+}
+
+void AcpSessionView::flushQueuedPrompt()
+{
+    if (!m_connection || !m_model)
+        return;
+    const bool processing = m_model->isProcessing();
+    auto item = m_promptQueue.takeNextIfIdle(processing);
+    if (!item)
+        return;
+    refreshQueueStrip();
+    dispatchPrompt(item->text, item->images);
+}
+
+void AcpSessionView::dispatchPrompt(const QString &text,
+                                    const QVector<QPair<QByteArray, QString>> &images)
+{
+    if (!m_connection || !m_model)
+        return;
+    const QString wireText = applyNewWorktreeInstruction(text);
+    m_model->appendUserMessage(text, images);
+    QList<QPair<QByteArray, QString>> imageList;
+    imageList.reserve(images.size());
+    for (const auto &p : images)
+        imageList.append(p);
+    m_connection->sendPrompt(wireText, imageList);
+    m_currentGroupCards.clear();
+    emit inputFocused();
+    m_stickToBottom = true;
+    scrollToBottomDeferred();
 }
 
 void AcpSessionView::onSendClicked()
 {
-    if (!m_connection || !m_model) return;
+    if (!m_connection || !m_model || !m_input)
+        return;
 
     const QString text = m_input->toPlainText().trimmed();
+    const bool hasContent = !text.isEmpty()
+        || (m_attachmentList && m_attachmentList->isNonEmpty());
     const bool processing = m_model->isProcessing();
-    if (processing) {
-        if (!GoalAgent::isNativeGoalSlash(text))
-            return;
+    const auto kind = AcpPromptQueue::classifySend(
+        processing, hasContent, GoalAgent::isNativeGoalSlash(text));
+
+    switch (kind) {
+    case AcpPromptQueue::SendKind::Ignore:
+        return;
+    case AcpPromptQueue::SendKind::Enqueue: {
+        QVector<QPair<QByteArray, QString>> images =
+            m_attachmentList ? m_attachmentList->takeAll()
+                             : QVector<QPair<QByteArray, QString>>{};
+        m_promptQueue.enqueue({text, std::move(images)});
+        m_input->clear();
+        updateSendButton();
+        refreshQueueStrip();
+        emit inputFocused();
+        return;
+    }
+    case AcpPromptQueue::SendKind::SidePrompt:
         m_model->appendUserMessage(text, {});
         m_connection->sendSidePrompt(applyNewWorktreeInstruction(text));
         m_input->clear();
@@ -1715,26 +1810,18 @@ void AcpSessionView::onSendClicked()
         m_stickToBottom = true;
         scrollToBottomDeferred();
         return;
+    case AcpPromptQueue::SendKind::SendNow: {
+        QVector<QPair<QByteArray, QString>> images =
+            m_attachmentList ? m_attachmentList->takeAll()
+                             : QVector<QPair<QByteArray, QString>>{};
+        m_input->clear();
+        updateSendButton();
+        dispatchPrompt(text, images);
+        return;
     }
-
-    QVector<QPair<QByteArray, QString>> images = m_attachmentList->takeAll();
-    if (text.isEmpty() && images.isEmpty()) return;
-
-    const QString wireText = applyNewWorktreeInstruction(text);
-    m_model->appendUserMessage(text, images);
-
-    QList<QPair<QByteArray, QString>> imageList;
-    imageList.reserve(images.size());
-    for (const auto &p : images) imageList.append(p);
-    m_connection->sendPrompt(wireText, imageList);
-
-    m_input->clear();
-    m_currentGroupCards.clear();
-    emit inputFocused();
-    // Sending is a fresh focus on the conversation — re-engage the stream
-    // even if the user had scrolled up earlier.
-    m_stickToBottom = true;
-    scrollToBottomDeferred();
+    default:
+        return;
+    }
 }
 
 void AcpSessionView::onCancelClicked()

@@ -33,6 +33,7 @@
 #include <cstdint>
 
 #include "AcpErrorClassifier.h"
+#include "AcpPromptQueue.h"
 #include "AcpProtocol.h"
 #include "AcpTranscriptTruncation.h"
 
@@ -42,6 +43,7 @@ class AcpImageAttachmentList;
 class AcpMessageWidget;
 class AcpPlanWidget;
 class AcpPermissionPrompt;
+class AcpPromptQueueStrip;
 class AcpSessionModel;
 class AcpToolCallCard;
 class AcpUsageIndicator;
@@ -183,6 +185,11 @@ private:
     void positionImproveButton();
     void updateImproveButtonState();
     void updateSendButton();
+    void refreshQueueStrip();
+    void scheduleFlushQueuedPrompt();
+    void flushQueuedPrompt();
+    void dispatchPrompt(const QString &text,
+                        const QVector<QPair<QByteArray, QString>> &images);
     bool inputKeyEventIsSubmit(QKeyEvent *ke) const;
     // Heartbeat indicator at the tail of the transcript: shows time since the
     // last structural event (new message / thought / tool call / plan /
@@ -280,6 +287,9 @@ private:
 
     // Input + buttons
     QPlainTextEdit *m_input = nullptr;
+    AcpPromptQueue m_promptQueue;
+    AcpPromptQueueStrip *m_queueStrip = nullptr;
+    bool m_flushQueuedScheduled = false;
     QPushButton *m_sendBtn = nullptr;
     QPushButton *m_cancelBtn = nullptr;
     QToolButton *m_attachBtn = nullptr;

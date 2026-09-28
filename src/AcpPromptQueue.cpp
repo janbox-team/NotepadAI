@@ -1,0 +1,62 @@
+/*
+ * This file is part of Notepad Next.
+ * Copyright 2026 NotepadAI contributors
+ *
+ * Notepad Next is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Notepad Next is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Notepad Next.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "AcpPromptQueue.h"
+
+#include <utility>
+
+AcpPromptQueue::SendKind AcpPromptQueue::classifySend(bool processing, bool hasContent, bool nativeGoalSlash)
+{
+    if (!hasContent)
+        return SendKind::Ignore;
+    if (processing)
+        return nativeGoalSlash ? SendKind::SidePrompt : SendKind::Enqueue;
+    return SendKind::SendNow;
+}
+
+void AcpPromptQueue::enqueue(Item item)
+{
+    m_items.push_back(std::move(item));
+}
+
+std::optional<AcpPromptQueue::Item> AcpPromptQueue::dequeue()
+{
+    if (m_items.isEmpty())
+        return std::nullopt;
+    return m_items.takeFirst();
+}
+
+bool AcpPromptQueue::removeAt(int index)
+{
+    if (index < 0 || index >= m_items.size())
+        return false;
+    m_items.removeAt(index);
+    return true;
+}
+
+std::optional<AcpPromptQueue::Item> AcpPromptQueue::takeNextIfIdle(bool processing)
+{
+    if (processing)
+        return std::nullopt;
+    return dequeue();
+}
+
+int AcpPromptQueue::size() const
+{
+    return m_items.size();
+}

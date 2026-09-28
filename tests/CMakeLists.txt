@@ -836,6 +836,29 @@ target_sources(test_acp_usage_indicator PRIVATE
 )
 add_test(NAME AcpUsageIndicator COMMAND test_acp_usage_indicator)
 
+# --- AcpPromptQueue: send-while-busy enqueue vs send-now / side-prompt ---
+qt_add_executable(test_acp_prompt_queue test_acp_prompt_queue.cpp)
+target_include_directories(test_acp_prompt_queue PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_acp_prompt_queue PRIVATE Qt6::Core Qt6::Test)
+target_sources(test_acp_prompt_queue PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/AcpPromptQueue.cpp
+    ${CMAKE_SOURCE_DIR}/src/AcpPromptQueue.h
+)
+add_test(NAME AcpPromptQueue COMMAND test_acp_prompt_queue)
+
+# --- AcpPromptQueueStrip: empty hide, preview, remove signal ---
+qt_add_executable(test_acp_prompt_queue_strip test_acp_prompt_queue_strip.cpp)
+target_include_directories(test_acp_prompt_queue_strip PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/widgets
+)
+target_link_libraries(test_acp_prompt_queue_strip PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+target_sources(test_acp_prompt_queue_strip PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/widgets/AcpPromptQueueStrip.cpp
+    ${CMAKE_SOURCE_DIR}/src/widgets/AcpPromptQueueStrip.h
+)
+add_test(NAME AcpPromptQueueStrip COMMAND test_acp_prompt_queue_strip)
+
 # --- AcpMessageWidget: streaming markdown, thought collapse, raw thought text ---
 qt_add_executable(test_acp_message_widget_streaming test_acp_message_widget_streaming.cpp)
 target_include_directories(test_acp_message_widget_streaming PRIVATE
