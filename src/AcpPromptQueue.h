@@ -24,12 +24,13 @@
 #include <QString>
 #include <QVector>
 
+#include <cstdint>
 #include <optional>
 
 class AcpPromptQueue
 {
 public:
-    enum class SendKind {
+    enum class SendKind : std::uint8_t {
         Ignore,
         SendNow,
         Enqueue,

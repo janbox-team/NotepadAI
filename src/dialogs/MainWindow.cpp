@@ -1903,9 +1903,13 @@ MainWindow::MainWindow(NotepadNextApplication *app) :
         // Clear dynamic items (keep only the static "Edit Mini Apps..." action)
         while (ui->menuMiniAppsSub->actions().size() > 1) {
             QAction *a = ui->menuMiniAppsSub->actions().first();
-            QMenu *sub = a->menu();
-            delete a;
-            delete sub;
+            if (QMenu *sub = a->menu()) {
+                // menuAction is owned by the QMenu — do not delete it first.
+                ui->menuMiniAppsSub->removeAction(a);
+                delete sub;
+            } else {
+                delete a;
+            }
         }
 
         const QString workspaceRoot = currentWorkspaceRoot();
